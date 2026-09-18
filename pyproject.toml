@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "network-leak-auditor"
+version = "0.1.0"
+description = "Lightweight telemetry and network leak audit CLI"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "mkchristie2004" }]
+license = { file = "LICENSE" }
+dependencies = ["psutil>=5.9"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+network-leak-auditor = "network_leak_auditor.cli:main"
+nla = "network_leak_auditor.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+network_leak_auditor = ["data/*.txt"]

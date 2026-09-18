@@ -1,0 +1,16 @@
+# Extensible starter tracker and telemetry list.
+google-analytics.com
+doubleclick.net
+facebook.net
+graph.facebook.com
+scorecardresearch.com
+ads.twitter.com
+bat.bing.com
+hotjar.com
+fullstory.com
+segment.io
+mixpanel.com
+amplitude.com
+branch.io
+appsflyer.com
+crashlytics.com
