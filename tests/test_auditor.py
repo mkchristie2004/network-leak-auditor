@@ -102,7 +102,10 @@ def test_reverse_dns_resolver_caches_success_and_handles_errors(monkeypatch: pyt
 
 def test_aggregation_and_report_shape() -> None:
     aggregate = {}
-    records = [ConnectionRecord("python", 123, "tcp", "8.8.8.8", 443)]
+    records = [
+        ConnectionRecord("python", 123, "tcp", "8.8.8.8", 443),
+        ConnectionRecord("python", 123, "udp", "8.8.8.8", 443),
+    ]
 
     class Resolver:
         def lookup(self, ip_address: str) -> str:
@@ -130,9 +133,9 @@ def test_aggregation_and_report_shape() -> None:
 
     assert report["tool"] == "network-leak-auditor"
     assert report["summary"] == {
-        "connections_seen": 2,
-        "unique_destinations": 1,
-        "flagged": 1,
+        "connections_seen": 4,
+        "unique_destinations": 2,
+        "flagged": 2,
         "lists_used": ["trackers.txt"],
     }
     assert report["findings"] == [
@@ -148,7 +151,20 @@ def test_aggregation_and_report_shape() -> None:
             "first_seen": "2026-01-01T00:00:00+00:00",
             "last_seen": "2026-01-01T00:00:05+00:00",
             "count": 2,
-        }
+    },
+    {
+        "process_name": "python",
+        "pid": 123,
+        "protocol": "udp",
+        "remote_ip": "8.8.8.8",
+        "remote_port": 443,
+        "domain": "api.segment.io",
+        "matched_domain": "segment.io",
+        "list_name": "trackers.txt",
+        "first_seen": "2026-01-01T00:00:00+00:00",
+        "last_seen": "2026-01-01T00:00:05+00:00",
+        "count": 2,
+    },
     ]
 
 

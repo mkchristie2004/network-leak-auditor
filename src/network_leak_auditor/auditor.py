@@ -252,7 +252,9 @@ def build_report(findings: Sequence[dict], lists_used: Sequence[str], generated_
         "host": socket.gethostname(),
         "summary": {
             "connections_seen": sum(item["count"] for item in findings),
-            "unique_destinations": len({(item["remote_ip"], item["remote_port"]) for item in findings}),
+            "unique_destinations": len(
+                {(item["protocol"], item["remote_ip"], item["remote_port"]) for item in findings}
+            ),
             "flagged": sum(1 for item in findings if item["matched_domain"]),
             "lists_used": list(lists_used),
         },
@@ -340,7 +342,8 @@ def render_text(report: dict) -> str:
 
 def write_output(content: str, output_path: Optional[str]) -> None:
     if output_path:
-        Path(output_path).write_text(content, encoding="utf-8")
+        with Path(output_path).open("w", encoding="utf-8") as handle:
+            handle.write(content)
     else:
         print(content, end="")
 
