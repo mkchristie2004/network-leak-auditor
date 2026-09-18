@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from network_leak_auditor.matching import DomainMatcher, RuleList
 from network_leak_auditor.models import ConnectionRecord
-from network_leak_auditor.reporting import build_report
+from network_leak_auditor.reporting import build_report, render_report
 
 
 def test_build_report_matches_schema_shape():
@@ -57,3 +57,29 @@ def test_build_report_aggregates_duplicate_findings():
     assert report["findings"][0]["count"] == 2
     assert report["findings"][0]["first_seen"] == "2026-01-01T00:00:00Z"
     assert report["findings"][0]["last_seen"] == "2026-01-01T00:05:00Z"
+
+
+def test_render_report_supports_json_csv_and_text():
+    record = ConnectionRecord(
+        process_name="browser",
+        pid=321,
+        protocol="tcp",
+        remote_ip="8.8.8.8",
+        remote_port=443,
+        observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        domain="api.segment.io",
+    )
+    rule_lists = [RuleList(name="starter", domains=("segment.io",))]
+    report = build_report([record], DomainMatcher(rule_lists), rule_lists)
+
+    json_output = render_report(report, "json")
+    csv_output = render_report(report, "csv")
+    text_output = render_report(report, "text")
+
+    assert '"tool": "network-leak-auditor"' in json_output
+    assert csv_output.splitlines()[0] == (
+        "process_name,pid,protocol,remote_ip,remote_port,domain,matched_domain,"
+        "list_name,first_seen,last_seen,count"
+    )
+    assert "network-leak-auditor 0.1.0" in text_output
+    assert "process" in text_output and "matched" in text_output

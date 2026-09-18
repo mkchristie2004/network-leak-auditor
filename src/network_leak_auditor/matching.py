@@ -53,17 +53,25 @@ def load_rule_lists(
 
 class DomainMatcher:
     def __init__(self, rule_lists: Iterable[RuleList]):
-        self._rules = [
-            (domain, rule_list.name)
-            for rule_list in rule_lists
-            for domain in rule_list.domains
-        ]
+        self._rules = {}
+        for rule_list in rule_lists:
+            for domain in rule_list.domains:
+                self._rules.setdefault(
+                    domain,
+                    MatchResult(matched_domain=domain, list_name=rule_list.name),
+                )
 
     def match(self, domain: Optional[str]) -> Optional[MatchResult]:
         if not domain:
             return None
         candidate = normalize_domain(domain)
-        for rule_domain, list_name in self._rules:
-            if candidate == rule_domain or candidate.endswith(f".{rule_domain}"):
-                return MatchResult(matched_domain=rule_domain, list_name=list_name)
+        exact_match = self._rules.get(candidate)
+        if exact_match:
+            return exact_match
+
+        labels = candidate.split(".")
+        for index in range(1, len(labels) - 1):
+            suffix_match = self._rules.get(".".join(labels[index:]))
+            if suffix_match:
+                return suffix_match
         return None

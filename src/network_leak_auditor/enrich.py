@@ -1,4 +1,6 @@
 import socket
+import threading
+from queue import Queue
 from typing import Iterable, List, Optional
 
 from network_leak_auditor.models import ConnectionRecord
@@ -16,14 +18,19 @@ class ReverseDNSResolver:
         if remote_ip in self._cache:
             return self._cache[remote_ip]
 
-        previous_timeout = socket.getdefaulttimeout()
-        try:
-            socket.setdefaulttimeout(self.timeout)
-            name = socket.gethostbyaddr(remote_ip)[0].rstrip(".").lower()
-        except (socket.herror, socket.gaierror, OSError):
-            name = None
-        finally:
-            socket.setdefaulttimeout(previous_timeout)
+        result_queue: Queue[Optional[str]] = Queue(maxsize=1)
+
+        def lookup() -> None:
+            try:
+                name = socket.gethostbyaddr(remote_ip)[0].rstrip(".").lower()
+            except (socket.herror, socket.gaierror, OSError):
+                name = None
+            result_queue.put(name)
+
+        thread = threading.Thread(target=lookup, daemon=True)
+        thread.start()
+        thread.join(self.timeout)
+        name = result_queue.get_nowait() if not thread.is_alive() else None
 
         self._cache[remote_ip] = name
         return name

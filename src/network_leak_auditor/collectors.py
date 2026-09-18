@@ -5,6 +5,7 @@ from typing import Iterable, List, Optional
 
 import psutil
 
+from network_leak_auditor.matching import normalize_domain
 from network_leak_auditor.models import ConnectionRecord, parse_timestamp, utc_now
 from network_leak_auditor.net import is_filtered_remote
 
@@ -83,7 +84,7 @@ def _record_from_json_line(raw_record: dict, include_private: bool = False) -> O
         return None
 
     domain = raw_record.get("domain")
-    normalized_domain = str(domain).strip().lower() if domain else None
+    normalized_domain = normalize_domain(str(domain)) if domain else None
     return ConnectionRecord(
         process_name=str(raw_record.get("process_name") or "unknown"),
         pid=raw_record.get("pid"),

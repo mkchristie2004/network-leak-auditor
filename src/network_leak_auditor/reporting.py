@@ -75,7 +75,8 @@ def build_report(records: Iterable[ConnectionRecord], matcher: DomainMatcher, ru
     findings.sort(key=lambda item: (-item["count"], item["process_name"], item["remote_ip"], item["remote_port"]))
 
     unique_destinations = {
-        (record.remote_ip, record.remote_port) for record in materialized_records
+        (record.protocol, record.remote_ip, record.remote_port)
+        for record in materialized_records
     }
 
     return {
