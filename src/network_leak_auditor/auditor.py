@@ -56,7 +56,10 @@ class ReverseDNSResolver:
         try:
             hostname = future.result(timeout=self.timeout)[0]
             domain = normalize_domain(hostname)
-        except (TimeoutError, OSError, socket.herror, socket.gaierror):
+        except TimeoutError:
+            future.cancel()
+            domain = None
+        except (OSError, socket.herror, socket.gaierror):
             domain = None
         self.cache[ip_address] = domain
         return domain
@@ -69,7 +72,7 @@ def is_public_destination(remote_ip: str, include_private: bool) -> bool:
     try:
         address = ipaddress.ip_address(remote_ip)
     except ValueError:
-        return True
+        return False
 
     if include_private:
         return True
@@ -192,9 +195,11 @@ def match_domain(domain: Optional[str], loaded_lists: Sequence[Tuple[str, set[st
         return None, None
 
     normalized = normalize_domain(domain)
-    for list_name, domains in loaded_lists:
-        for candidate in domains:
-            if normalized == candidate or normalized.endswith(f".{candidate}"):
+    parts = normalized.split(".")
+    for index in range(len(parts)):
+        candidate = ".".join(parts[index:])
+        for list_name, domains in loaded_lists:
+            if candidate in domains:
                 return candidate, list_name
     return None, None
 

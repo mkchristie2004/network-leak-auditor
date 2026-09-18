@@ -1,9 +1,13 @@
+from datetime import datetime, timezone
 import socket
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from network_leak_auditor.auditor import (
     ConnectionRecord,
+    ReverseDNSResolver,
     build_report,
     collect_connections,
     match_domain,
@@ -12,6 +16,7 @@ from network_leak_auditor.auditor import (
     render_report,
     update_aggregate,
 )
+from network_leak_auditor.cli import build_parser, main
 
 
 def test_parse_domain_list_ignores_comments_blanks_and_case(tmp_path: Path) -> None:
@@ -60,6 +65,41 @@ def test_collect_connections_filters_private_and_non_established() -> None:
     ]
 
 
+def test_collect_connections_ignores_invalid_remote_ip() -> None:
+    connections = [
+        SimpleNamespace(type=socket.SOCK_STREAM, status="ESTABLISHED", raddr=("not-an-ip", 443), pid=100),
+    ]
+
+    records = collect_connections(
+        include_private=False,
+        net_connections=lambda kind: connections,
+        process_lookup=lambda pid: f"proc-{pid}",
+    )
+
+    assert records == []
+
+
+def test_reverse_dns_resolver_caches_success_and_handles_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_gethostbyaddr(ip_address: str):
+        calls.append(ip_address)
+        if ip_address == "8.8.8.8":
+            return ("Api.Segment.io", [], [ip_address])
+        raise socket.herror("lookup failed")
+
+    monkeypatch.setattr("network_leak_auditor.auditor.socket.gethostbyaddr", fake_gethostbyaddr)
+    resolver = ReverseDNSResolver(timeout=0.1)
+    try:
+        assert resolver.lookup("8.8.8.8") == "api.segment.io"
+        assert resolver.lookup("8.8.8.8") == "api.segment.io"
+        assert resolver.lookup("1.1.1.1") is None
+    finally:
+        resolver.close()
+
+    assert calls == ["8.8.8.8", "1.1.1.1"]
+
+
 def test_aggregation_and_report_shape() -> None:
     aggregate = {}
     records = [ConnectionRecord("python", 123, "tcp", "8.8.8.8", 443)]
@@ -72,7 +112,7 @@ def test_aggregation_and_report_shape() -> None:
     update_aggregate(
         aggregate,
         records,
-        __import__("datetime").datetime(2026, 1, 1, tzinfo=__import__("datetime").timezone.utc),
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
         Resolver(),
         {},
         [("trackers.txt", {"segment.io"})],
@@ -80,13 +120,13 @@ def test_aggregation_and_report_shape() -> None:
     update_aggregate(
         aggregate,
         records,
-        __import__("datetime").datetime(2026, 1, 1, 0, 0, 5, tzinfo=__import__("datetime").timezone.utc),
+        datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc),
         Resolver(),
         {},
         [("trackers.txt", {"segment.io"})],
     )
 
-    report = build_report(list(aggregate.values()), ["trackers.txt"], __import__("datetime").datetime(2026, 1, 1, 0, 0, 10, tzinfo=__import__("datetime").timezone.utc))
+    report = build_report(list(aggregate.values()), ["trackers.txt"], datetime(2026, 1, 1, 0, 0, 10, tzinfo=timezone.utc))
 
     assert report["tool"] == "network-leak-auditor"
     assert report["summary"] == {
@@ -140,3 +180,20 @@ def test_render_report_csv_contains_expected_columns() -> None:
 
     assert "process_name,pid,protocol,remote_ip,remote_port,domain,matched_domain,list_name,first_seen,last_seen,count" in rendered
     assert "python,1,tcp,8.8.8.8,443,dns.google" in rendered
+
+
+def test_watch_parser_rejects_non_positive_values() -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["watch", "--interval", "0"])
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["watch", "--duration", "-1"])
+
+
+def test_main_reports_mapping_file_context(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = main(["scan", "--mapping-file", "missing-mappings.txt"])
+
+    assert exit_code == 2
+    assert "--mapping-file not found: missing-mappings.txt" in capsys.readouterr().err
