@@ -420,6 +420,47 @@ def test_scan_with_malformed_input_returns_exit_code_2(tmp_path: Path, capsys: p
     assert "--input line 1: missing required key 'protocol'" in capsys.readouterr().err
 
 
+def test_scan_with_input_normalizes_mapping_domain_for_matching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    input_path = tmp_path / "capture.jsonl"
+    list_path = tmp_path / "trackers.txt"
+    mapping_path = tmp_path / "mapping.txt"
+    input_path.write_text(
+        '{"process_name":"python","pid":123,"protocol":"tcp","remote_ip":"8.8.8.8","remote_port":443}\n',
+        encoding="utf-8",
+    )
+    list_path.write_text("doubleclick.net\n", encoding="utf-8")
+    mapping_path.write_text("  DoubleClick.NET. =8.8.8.8\n", encoding="utf-8")
+
+    class FailingResolver:
+        def __init__(self) -> None:
+            raise AssertionError("resolver should not be created when --no-rdns is set")
+
+    monkeypatch.setattr("network_leak_auditor.cli.ReverseDNSResolver", FailingResolver)
+    exit_code = main(
+        [
+            "scan",
+            "--input",
+            str(input_path),
+            "--format",
+            "json",
+            "--no-rdns",
+            "--mapping-file",
+            str(mapping_path),
+            "--list",
+            str(list_path),
+        ]
+    )
+
+    assert exit_code == 1
+    captured = json.loads(capsys.readouterr().out)
+    assert captured["findings"][0]["domain"] == "doubleclick.net"
+    assert captured["findings"][0]["matched_domain"] == "doubleclick.net"
+    assert captured["summary"]["unclassified"] == 0
+    assert captured["summary"]["unclassified_unique_domains"] == 0
+
+
 def test_scan_cli_access_denied_sets_visibility_warning_in_json_and_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
