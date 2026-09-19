@@ -246,6 +246,10 @@ def update_aggregate(
             domain = mappings.get(record.remote_ip)
             if domain is None and resolve_rdns and resolver is not None:
                 domain = resolver.lookup(record.remote_ip)
+            if domain:
+                domain = normalize_domain(domain)
+                if not domain:
+                    domain = None
             matched_domain, list_name = match_domain(domain, loaded_lists)
             aggregate[key] = {
                 "process_name": record.process_name,

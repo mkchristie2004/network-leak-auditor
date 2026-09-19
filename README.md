@@ -156,6 +156,7 @@ When restricted visibility is detected, reports include `visibility_warning` and
 - Static tracker lists can become stale and require periodic updates.
 - Suffix matching cannot reliably detect CDN fronting (`*.cloudfront.net`-style) or first-party CNAME cloaking.
 - Use the `unclassified` summary count to spot destinations that did not match any configured list.
+- Internationalized domain name (IDN/punycode) normalization is currently out of scope for this MVP.
 
 ## Development
 Run tests locally:

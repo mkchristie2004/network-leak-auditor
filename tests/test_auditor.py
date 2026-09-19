@@ -477,3 +477,54 @@ def test_build_report_unclassified_unique_domains_counts_domains_once() -> None:
 
     assert report["summary"]["unclassified"] == 2
     assert report["summary"]["unclassified_unique_domains"] == 1
+
+
+def test_pipeline_normalizes_domain_before_suffix_matching() -> None:
+    aggregate = {}
+    records = [ConnectionRecord("python", 123, "tcp", "8.8.8.8", 443)]
+
+    class Resolver:
+        def lookup(self, ip_address: str) -> str:
+            assert ip_address == "8.8.8.8"
+            return "  DoubleClick.NET. "
+
+    update_aggregate(
+        aggregate,
+        records,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        Resolver(),
+        {},
+        [("trackers.txt", {"doubleclick.net"})],
+    )
+    finding = list(aggregate.values())[0]
+
+    assert finding["domain"] == "doubleclick.net"
+    assert finding["matched_domain"] == "doubleclick.net"
+    assert finding["list_name"] == "trackers.txt"
+
+
+def test_pipeline_normalization_keeps_unclassified_unique_domains_case_insensitive() -> None:
+    aggregate = {}
+    records = [
+        ConnectionRecord("proc-a", 1, "tcp", "8.8.8.8", 443),
+        ConnectionRecord("proc-b", 2, "udp", "8.8.4.4", 53),
+    ]
+
+    class Resolver:
+        def lookup(self, ip_address: str) -> str:
+            if ip_address == "8.8.8.8":
+                return " Example.com. "
+            return "example.COM"
+
+    update_aggregate(
+        aggregate,
+        records,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        Resolver(),
+        {},
+        [("trackers.txt", {"doubleclick.net"})],
+    )
+    report = build_report(list(aggregate.values()), ["trackers.txt"], datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    assert report["summary"]["unclassified"] == 2
+    assert report["summary"]["unclassified_unique_domains"] == 1
