@@ -135,7 +135,7 @@ cdn.example.com=203.0.113.5,203.0.113.6
 ```
 
 - `visibility_warning` is `null` during normal visibility, and populated when the OS denies access to some connections/process names.
-- `summary.unclassified` is the count of unique findings where `matched_domain` is `null`.
+- `summary.unclassified` is the count of unique findings where `matched_domain` is `null` (unique by finding tuple: `process_name`, `pid`, `protocol`, `remote_ip`, `remote_port`; not unique by domain).
 
 ## Exit codes
 - `0`: no flagged destinations were found

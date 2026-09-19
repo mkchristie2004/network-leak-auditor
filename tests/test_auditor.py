@@ -402,3 +402,27 @@ def test_scan_with_malformed_input_returns_exit_code_2(tmp_path: Path, capsys: p
 
     assert exit_code == 2
     assert "--input line 1: missing required key 'protocol'" in capsys.readouterr().err
+
+
+def test_scan_cli_access_denied_sets_visibility_warning_in_json_and_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    list_path = tmp_path / "trackers.txt"
+    list_path.write_text("segment.io\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "network_leak_auditor.cli.collect_connections",
+        lambda **kwargs: collect_connections(
+            net_connections=lambda kind: (_ for _ in ()).throw(psutil.AccessDenied())
+        ),
+    )
+
+    exit_code = main(["scan", "--list", str(list_path), "--format", "json"])
+    assert exit_code == 0
+    json_report = json.loads(capsys.readouterr().out)
+    assert json_report["visibility_warning"] == VISIBILITY_WARNING_MESSAGE
+
+    exit_code = main(["scan", "--list", str(list_path), "--format", "text"])
+    assert exit_code == 0
+    text_report = capsys.readouterr().out
+    assert f"WARNING: {VISIBILITY_WARNING_MESSAGE}" in text_report
