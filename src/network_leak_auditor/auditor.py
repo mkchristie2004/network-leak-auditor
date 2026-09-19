@@ -19,6 +19,10 @@ from . import __version__
 
 TOOL_NAME = "network-leak-auditor"
 DEFAULT_TIMEOUT = 0.5
+VISIBILITY_WARNING_MESSAGE = (
+    "Some connections or process names may be hidden: the OS restricts cross-process visibility "
+    "without elevated privileges. Results may be incomplete."
+)
 
 
 @dataclass(frozen=True)
@@ -90,12 +94,16 @@ def collect_connections(
     include_private: bool = False,
     net_connections: Callable[..., Iterable[object]] = psutil.net_connections,
     process_lookup: Callable[[Optional[int]], str] | None = None,
-) -> List[ConnectionRecord]:
-    if process_lookup is None:
-        process_lookup = resolve_process_name
+) -> Tuple[List[ConnectionRecord], bool]:
+    visibility_restricted = False
 
     findings: List[ConnectionRecord] = []
-    for connection in net_connections(kind="inet"):
+    try:
+        connections = net_connections(kind="inet")
+    except psutil.AccessDenied:
+        return findings, True
+
+    for connection in connections:
         protocol = classify_protocol(connection)
         if protocol is None:
             continue
@@ -110,16 +118,21 @@ def collect_connections(
             continue
 
         pid = getattr(connection, "pid", None)
+        if process_lookup is None:
+            process_name, process_access_denied = resolve_process_name_with_reason(pid)
+            visibility_restricted = visibility_restricted or process_access_denied
+        else:
+            process_name = process_lookup(pid)
         findings.append(
             ConnectionRecord(
-                process_name=process_lookup(pid),
+                process_name=process_name,
                 pid=pid,
                 protocol=protocol,
                 remote_ip=remote_ip,
                 remote_port=remote_port,
             )
         )
-    return findings
+    return findings, visibility_restricted
 
 
 def classify_protocol(connection: object) -> Optional[str]:
@@ -134,12 +147,18 @@ def classify_protocol(connection: object) -> Optional[str]:
 
 
 def resolve_process_name(pid: Optional[int]) -> str:
+    return resolve_process_name_with_reason(pid)[0]
+
+
+def resolve_process_name_with_reason(pid: Optional[int]) -> Tuple[str, bool]:
     if pid is None:
-        return "unknown"
+        return "unknown", False
     try:
-        return psutil.Process(pid).name()
+        return psutil.Process(pid).name(), False
+    except psutil.AccessDenied:
+        return "unknown", True
     except (psutil.Error, OSError):
-        return "unknown"
+        return "unknown", False
 
 
 def parse_domain_list(path: Path) -> set[str]:
@@ -208,9 +227,10 @@ def update_aggregate(
     aggregate: Dict[Tuple[str, Optional[int], str, str, int], dict],
     records: Iterable[ConnectionRecord],
     timestamp: datetime,
-    resolver: ReverseDNSResolver,
+    resolver: Optional[ReverseDNSResolver],
     mappings: Dict[str, str],
     loaded_lists: Sequence[Tuple[str, set[str]]],
+    resolve_rdns: bool = True,
 ) -> None:
     stamp = isoformat(timestamp)
     for record in records:
@@ -223,7 +243,9 @@ def update_aggregate(
         )
         item = aggregate.get(key)
         if item is None:
-            domain = mappings.get(record.remote_ip) or resolver.lookup(record.remote_ip)
+            domain = mappings.get(record.remote_ip)
+            if domain is None and resolve_rdns and resolver is not None:
+                domain = resolver.lookup(record.remote_ip)
             matched_domain, list_name = match_domain(domain, loaded_lists)
             aggregate[key] = {
                 "process_name": record.process_name,
@@ -244,18 +266,25 @@ def update_aggregate(
         item["count"] += 1
 
 
-def build_report(findings: Sequence[dict], lists_used: Sequence[str], generated_at: datetime) -> dict:
+def build_report(
+    findings: Sequence[dict],
+    lists_used: Sequence[str],
+    generated_at: datetime,
+    visibility_warning: Optional[str] = None,
+) -> dict:
     return {
         "tool": TOOL_NAME,
         "version": __version__,
         "generated_at": isoformat(generated_at),
         "host": socket.gethostname(),
+        "visibility_warning": visibility_warning,
         "summary": {
             "connections_seen": sum(item["count"] for item in findings),
             "unique_destinations": len(
                 {(item["protocol"], item["remote_ip"], item["remote_port"]) for item in findings}
             ),
             "flagged": sum(1 for item in findings if item["matched_domain"]),
+            "unclassified": sum(1 for item in findings if item["matched_domain"] is None),
             "lists_used": list(lists_used),
         },
         "findings": list(findings),
@@ -303,10 +332,22 @@ def render_text(report: dict) -> str:
             f"connections_seen={summary['connections_seen']} "
             f"unique_destinations={summary['unique_destinations']} "
             f"flagged={summary['flagged']} "
+            f"unclassified={summary['unclassified']} "
             f"lists_used={','.join(summary['lists_used'])}"
         ),
-        "",
+        (
+            "Unclassified: "
+            f"{summary['unclassified']} destination(s) did not match any list "
+            "(possibly CDN-fronted or unlisted)."
+        ),
     ]
+    if report.get("visibility_warning"):
+        lines.append(f"WARNING: {report['visibility_warning']}")
+    lines.extend(
+        [
+        "",
+        ]
+    )
 
     if not report["findings"]:
         lines.append("No connections observed.")

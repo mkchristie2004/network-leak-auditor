@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
 from typing import Optional, Sequence
 
 from .auditor import (
+    VISIBILITY_WARNING_MESSAGE,
+    ConnectionRecord,
     ReverseDNSResolver,
     build_report,
     collect_connections,
@@ -64,8 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--mapping-file")
     common.add_argument("--list", dest="list_file")
     common.add_argument("--extra-list", action="append", default=[])
+    common.add_argument("--no-rdns", action="store_true")
 
-    subparsers.add_parser("scan", parents=[common], help="Run a one-shot connection audit")
+    scan = subparsers.add_parser("scan", parents=[common], help="Run a one-shot connection audit")
+    scan.add_argument("--input", help="JSON-lines input file path, or - for stdin")
 
     watch = subparsers.add_parser("watch", parents=[common], help="Poll connections until stopped")
     watch.add_argument("--interval", type=positive_float, default=5.0)
@@ -74,44 +79,60 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_scan(args: argparse.Namespace) -> int:
-    resolver = ReverseDNSResolver()
+    resolver = None if args.no_rdns else ReverseDNSResolver()
     try:
         loaded_lists = load_configured_lists(args.list_file, args.extra_list)
         mappings = load_configured_mappings(args.mapping_file)
         aggregate = {}
         timestamp = utc_now()
+        if args.input:
+            records = parse_input_records(args.input)
+            visibility_restricted = False
+        else:
+            records, visibility_restricted = collect_connections(include_private=args.include_private)
         update_aggregate(
             aggregate,
-            collect_connections(include_private=args.include_private),
+            records,
             timestamp,
             resolver,
             mappings,
             loaded_lists,
+            resolve_rdns=not args.no_rdns,
         )
-        report = build_report(list(aggregate.values()), [name for name, _ in loaded_lists], timestamp)
+        report = build_report(
+            list(aggregate.values()),
+            [name for name, _ in loaded_lists],
+            timestamp,
+            visibility_warning=VISIBILITY_WARNING_MESSAGE if visibility_restricted else None,
+        )
         write_report_output(render_report(report, args.format), args.output)
         return 1 if report["summary"]["flagged"] else 0
     finally:
-        resolver.close()
+        if resolver is not None:
+            resolver.close()
 
 
 def run_watch(args: argparse.Namespace) -> int:
-    resolver = ReverseDNSResolver()
+    resolver = None if args.no_rdns else ReverseDNSResolver()
     started = time.monotonic()
     aggregate = {}
+    visibility_restricted = False
     try:
         loaded_lists = load_configured_lists(args.list_file, args.extra_list)
         mappings = load_configured_mappings(args.mapping_file)
         try:
             while True:
                 timestamp = utc_now()
+                records, restricted = collect_connections(include_private=args.include_private)
+                visibility_restricted = visibility_restricted or restricted
                 update_aggregate(
                     aggregate,
-                    collect_connections(include_private=args.include_private),
+                    records,
                     timestamp,
                     resolver,
                     mappings,
                     loaded_lists,
+                    resolve_rdns=not args.no_rdns,
                 )
                 if args.duration is not None and (time.monotonic() - started) >= args.duration:
                     break
@@ -119,11 +140,69 @@ def run_watch(args: argparse.Namespace) -> int:
                     break
         except KeyboardInterrupt:
             pass
-        report = build_report(list(aggregate.values()), [name for name, _ in loaded_lists], utc_now())
+        report = build_report(
+            list(aggregate.values()),
+            [name for name, _ in loaded_lists],
+            utc_now(),
+            visibility_warning=VISIBILITY_WARNING_MESSAGE if visibility_restricted else None,
+        )
         write_report_output(render_report(report, args.format), args.output)
         return 1 if report["summary"]["flagged"] else 0
     finally:
-        resolver.close()
+        if resolver is not None:
+            resolver.close()
+
+
+def parse_input_records(input_path: str) -> list[ConnectionRecord]:
+    handle = sys.stdin if input_path == "-" else Path(input_path).open("r", encoding="utf-8")
+    should_close = input_path != "-"
+    records = []
+    try:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"--input line {line_number}: invalid JSON ({exc.msg})") from exc
+            if not isinstance(payload, dict):
+                raise ValueError(f"--input line {line_number}: expected JSON object")
+
+            try:
+                process_name = payload["process_name"]
+                pid = payload["pid"]
+                protocol = payload["protocol"]
+                remote_ip = payload["remote_ip"]
+                remote_port = payload["remote_port"]
+            except KeyError as exc:
+                raise ValueError(f"--input line {line_number}: missing required key {exc.args[0]!r}") from exc
+
+            if not isinstance(process_name, str):
+                raise ValueError(f"--input line {line_number}: process_name must be a string")
+            if pid is not None and (not isinstance(pid, int) or isinstance(pid, bool)):
+                raise ValueError(f"--input line {line_number}: pid must be an integer or null")
+            if protocol not in {"tcp", "udp"}:
+                raise ValueError(f"--input line {line_number}: protocol must be 'tcp' or 'udp'")
+            if not isinstance(remote_ip, str):
+                raise ValueError(f"--input line {line_number}: remote_ip must be a string")
+            if not isinstance(remote_port, int) or isinstance(remote_port, bool):
+                raise ValueError(f"--input line {line_number}: remote_port must be an integer")
+
+            records.append(
+                ConnectionRecord(
+                    process_name=process_name,
+                    pid=pid,
+                    protocol=protocol,
+                    remote_ip=remote_ip,
+                    remote_port=remote_port,
+                )
+            )
+    finally:
+        if should_close:
+            handle.close()
+
+    return records
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
