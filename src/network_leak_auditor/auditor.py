@@ -343,11 +343,7 @@ def render_text(report: dict) -> str:
     ]
     if report.get("visibility_warning"):
         lines.append(f"WARNING: {report['visibility_warning']}")
-    lines.extend(
-        [
-        "",
-        ]
-    )
+    lines.append("")
 
     if not report["findings"]:
         lines.append("No connections observed.")
