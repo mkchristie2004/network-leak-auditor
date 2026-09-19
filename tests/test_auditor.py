@@ -224,6 +224,7 @@ def test_aggregation_and_report_shape() -> None:
         "unique_destinations": 2,
         "flagged": 2,
         "unclassified": 0,
+        "unclassified_unique_domains": 0,
         "lists_used": ["trackers.txt"],
     }
     assert report["findings"] == [
@@ -264,7 +265,14 @@ def test_render_report_csv_contains_expected_columns() -> None:
         "generated_at": "2026-01-01T00:00:00+00:00",
         "host": "test-host",
         "visibility_warning": None,
-        "summary": {"connections_seen": 1, "unique_destinations": 1, "flagged": 0, "unclassified": 1, "lists_used": ["trackers.txt"]},
+        "summary": {
+            "connections_seen": 1,
+            "unique_destinations": 1,
+            "flagged": 0,
+            "unclassified": 1,
+            "unclassified_unique_domains": 1,
+            "lists_used": ["trackers.txt"],
+        },
         "findings": [
             {
                 "process_name": "python",
@@ -312,13 +320,21 @@ def test_render_text_includes_unclassified_and_warning() -> None:
         "generated_at": "2026-01-01T00:00:00+00:00",
         "host": "test-host",
         "visibility_warning": VISIBILITY_WARNING_MESSAGE,
-        "summary": {"connections_seen": 1, "unique_destinations": 1, "flagged": 0, "unclassified": 1, "lists_used": ["trackers.txt"]},
+        "summary": {
+            "connections_seen": 1,
+            "unique_destinations": 1,
+            "flagged": 0,
+            "unclassified": 1,
+            "unclassified_unique_domains": 1,
+            "lists_used": ["trackers.txt"],
+        },
         "findings": [],
     }
 
     rendered = render_report(report, "text")
 
     assert "Unclassified: 1 destination(s) did not match any list" in rendered
+    assert "Unclassified unique domains: 1." in rendered
     assert f"WARNING: {VISIBILITY_WARNING_MESSAGE}" in rendered
 
 
@@ -426,3 +442,38 @@ def test_scan_cli_access_denied_sets_visibility_warning_in_json_and_text(
     assert exit_code == 0
     text_report = capsys.readouterr().out
     assert f"WARNING: {VISIBILITY_WARNING_MESSAGE}" in text_report
+
+
+def test_build_report_unclassified_unique_domains_counts_domains_once() -> None:
+    findings = [
+        {
+            "process_name": "proc-a",
+            "pid": 1,
+            "protocol": "tcp",
+            "remote_ip": "8.8.8.8",
+            "remote_port": 443,
+            "domain": "cdn.example.com",
+            "matched_domain": None,
+            "list_name": None,
+            "first_seen": "2026-01-01T00:00:00+00:00",
+            "last_seen": "2026-01-01T00:00:00+00:00",
+            "count": 1,
+        },
+        {
+            "process_name": "proc-b",
+            "pid": 2,
+            "protocol": "udp",
+            "remote_ip": "8.8.4.4",
+            "remote_port": 53,
+            "domain": "cdn.example.com",
+            "matched_domain": None,
+            "list_name": None,
+            "first_seen": "2026-01-01T00:00:00+00:00",
+            "last_seen": "2026-01-01T00:00:00+00:00",
+            "count": 1,
+        },
+    ]
+    report = build_report(findings, ["trackers.txt"], datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    assert report["summary"]["unclassified"] == 2
+    assert report["summary"]["unclassified_unique_domains"] == 1

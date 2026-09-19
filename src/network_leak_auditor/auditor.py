@@ -272,6 +272,9 @@ def build_report(
     generated_at: datetime,
     visibility_warning: Optional[str] = None,
 ) -> dict:
+    unclassified = [item for item in findings if item["matched_domain"] is None]
+    unclassified_unique_domains = len({item["domain"] for item in unclassified if item.get("domain")})
+
     return {
         "tool": TOOL_NAME,
         "version": __version__,
@@ -284,7 +287,8 @@ def build_report(
                 {(item["protocol"], item["remote_ip"], item["remote_port"]) for item in findings}
             ),
             "flagged": sum(1 for item in findings if item["matched_domain"]),
-            "unclassified": sum(1 for item in findings if item["matched_domain"] is None),
+            "unclassified": len(unclassified),
+            "unclassified_unique_domains": unclassified_unique_domains,
             "lists_used": list(lists_used),
         },
         "findings": list(findings),
@@ -333,6 +337,7 @@ def render_text(report: dict) -> str:
             f"unique_destinations={summary['unique_destinations']} "
             f"flagged={summary['flagged']} "
             f"unclassified={summary['unclassified']} "
+            f"unclassified_unique_domains={summary['unclassified_unique_domains']} "
             f"lists_used={','.join(summary['lists_used'])}"
         ),
         (
@@ -340,6 +345,7 @@ def render_text(report: dict) -> str:
             f"{summary['unclassified']} destination(s) did not match any list "
             "(possibly CDN-fronted or unlisted)."
         ),
+        f"Unclassified unique domains: {summary['unclassified_unique_domains']}.",
     ]
     if report.get("visibility_warning"):
         lines.append(f"WARNING: {report['visibility_warning']}")

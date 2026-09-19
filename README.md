@@ -114,6 +114,7 @@ cdn.example.com=203.0.113.5,203.0.113.6
     "unique_destinations": 2,
     "flagged": 1,
     "unclassified": 1,
+    "unclassified_unique_domains": 1,
     "lists_used": ["trackers.txt"]
   },
   "findings": [
@@ -136,6 +137,7 @@ cdn.example.com=203.0.113.5,203.0.113.6
 
 - `visibility_warning` is `null` during normal visibility, and populated when the OS denies access to some connections/process names.
 - `summary.unclassified` is the count of unique findings where `matched_domain` is `null` (unique by finding tuple: `process_name`, `pid`, `protocol`, `remote_ip`, `remote_port`; not unique by domain).
+- `summary.unclassified_unique_domains` is the number of unique unclassified domain names (domain-level count, unlike tuple-based `summary.unclassified`).
 
 ## Exit codes
 - `0`: no flagged destinations were found
